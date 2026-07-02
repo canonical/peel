@@ -1,0 +1,101 @@
+name: Release
+
+# Triggered by pushing a version tag (e.g. v1.0.0). This builds the peel LXD
+# image for each supported architecture, attaches them to that tag's GitHub
+# release, and republishes streams/v1/index.json + streams/v1/images.json as
+# assets on a separate "streams/v1" release, so that:
+#
+#   lxc remote add peel https://github.com/<owner>/<repo>/releases/download
+#
+# works as a simplestreams LXD image server.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  # GOARCH values with an unambiguous, non-aliased LXD architecture name
+  # (see image/build.sh and shared/osarch in LXD). 32-bit arm is
+  # deliberately omitted since GOARCH=arm is ambiguous between LXD's
+  # armv6l/armv7l architectures.
+  ARCHES: "amd64 arm64 386 ppc64le riscv64 s390x"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Determine version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Build peel images
+        run: |
+          set -eu
+          mkdir -p dist
+          for arch in $ARCHES; do
+            image/build.sh -a "$arch" -o "dist/peel-$arch-lxd.tar.xz"
+          done
+
+      - name: Create release for ${{ steps.version.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" --title "$VERSION" --generate-notes
+          fi
+
+      - name: Upload image assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release upload "$VERSION" dist/*.tar.xz --clobber
+
+      - name: Fetch existing streams metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p tmp
+          gh release download streams/v1 -D tmp -p 'images.json' || true
+
+      - name: Update streams/v1 metadata
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p streams/v1
+          asset_args=()
+          for arch in $ARCHES; do
+            asset_args+=(--asset "$arch=dist/peel-$arch-lxd.tar.xz")
+          done
+          python3 .github/scripts/update_streams.py \
+            --version "$VERSION" \
+            --existing-images tmp/images.json \
+            --output-images streams/v1/images.json \
+            --output-index streams/v1/index.json \
+            "${asset_args[@]}"
+
+      - name: Publish streams/v1 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if ! gh release view "streams/v1" >/dev/null 2>&1; then
+            gh release create "streams/v1" \
+              --title "streams/v1" \
+              --notes "Simplestreams metadata for the peel LXD image remote. Add with: lxc remote add peel https://github.com/${{ github.repository }}/releases/download --protocol simplestreams"
+          fi
+          gh release upload "streams/v1" streams/v1/index.json streams/v1/images.json --clobber
