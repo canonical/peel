@@ -26,6 +26,7 @@ import (
 
 	"github.com/canonical/peel/internal/config"
 	"github.com/canonical/peel/internal/entrypoint"
+	"github.com/canonical/peel/internal/lo"
 	"github.com/canonical/peel/internal/network"
 	"github.com/canonical/peel/internal/pull"
 	"github.com/canonical/peel/internal/rootfs"
@@ -97,6 +98,14 @@ func run(root, configPath, statePath string, pullOnly bool) error {
 		log.Printf("pull-only: resolved entrypoint path=%s argv=%v dir=%s uid=%d gid=%d",
 			spec.Path, spec.Argv, spec.Dir, spec.UID, spec.GID)
 		return nil
+	}
+
+	// Share this container's loopback listeners with any peers found in
+	// /peel/lo, and proxy in theirs, for the lifetime of the container.
+	// This is a no-op if /peel/lo doesn't exist. Best-effort: it should
+	// never prevent the entrypoint below from starting.
+	if err := lo.Run(ctx); err != nil {
+		log.Printf("lo: %v", err)
 	}
 
 	return supervisor.Run(spec)

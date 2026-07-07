@@ -52,6 +52,35 @@ logged but never blocks boot.
 Peel embeds a copy of [Mozilla's CA bundle as distributed by curl](https://curl.se/docs/caextract.html)
 for its own OCI registry connections.
 
+### Sharing loopback listeners across containers
+
+If `/peel/lo` exists inside the container (typically a disk device the
+operator has attached identically to every container that should
+participate), peel listens on a unix socket at `/peel/lo/<hostname>` and
+uses it to share its loopback (and wildcard, i.e. "all interfaces") TCP/UDP
+listeners with every other container that also has a socket there, and to
+pick up theirs in return. Concretely: if container `a` has something
+listening on `127.0.0.1:8080`, and container `b` also participates, a
+process inside `b` can reach it at its own `127.0.0.1:8080`, as if the two
+containers shared a network namespace (much like containers within the
+same pod in Kubernetes or Podman). Peel discovers its own listeners by
+polling `/proc/net/{tcp,tcp6,udp,udp6}` (every second for the first minute
+after it starts, then every 5 seconds), and discovers peers by polling
+`/peel/lo` itself on that same schedule; listeners a container only has
+because it's proxying for a peer are never re-advertised to others.
+
+The exact address a listener is bound to matters: a listener on a specific
+loopback address (e.g. `127.0.0.2`, as opposed to `127.0.0.1`) is proxied
+on that same specific address, and a listener bound to a wildcard address
+(`0.0.0.0`/`::`) is proxied on that same wildcard address in every other
+container too. A wildcard-bound proxy still only forwards connections that
+are themselves local (loopback), though: it never turns into an open relay
+for traffic arriving on a container's real network interfaces.
+
+This is entirely peer-to-peer and best-effort: it has no effect unless
+`/peel/lo` is attached, and a container that can't reach a peer's socket
+(e.g. because that container hasn't started yet) just keeps retrying.
+
 ## Instance configuration keys
 
 Set these with `lxc config set <instance> <key> <value>` before starting the
