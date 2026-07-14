@@ -481,57 +481,6 @@ func TestReconnectReconciles(t *testing.T) {
 	}
 }
 
-// TestLoopbackListensFiltered verifies that listens on loopback addresses
-// (127.x.x.x, ::1) are silently ignored and never appear on Changes.
-// Wildcard (0.0.0.0, ::) and specific non-loopback addresses both pass through.
-func TestLoopbackListensFiltered(t *testing.T) {
-	dir := t.TempDir()
-
-	evCh := make(chan lo.Event, 16)
-	evCh <- evAdd(lo.V4, lo.TCP, "127.0.0.1", 9999) // loopback v4 — filtered
-	evCh <- evAdd(lo.V6, lo.TCP, "::1", 9999)       // loopback v6 — filtered
-	evCh <- evAdd(lo.V4, lo.TCP, "0.0.0.0", 9999)   // wildcard — passes
-	evCh <- evAdd(lo.V4, lo.TCP, "10.0.0.1", 8888)  // specific non-loopback — passes
-	evCh <- evSync()
-
-	srv := newWatchServer(t, dir, "app")
-	srv.connect(evCh)
-
-	c := client.NewWithConfig(client.Config{
-		Dir:            dir,
-		StartupTimeout: 3 * time.Second,
-	})
-	defer func() { c.Kill(); c.Wait() }() //nolint:errcheck
-
-	got := recvChanges(t, c.Changes(), 5*time.Second)
-	want := []string{"open:ipv4:app:9999", "open:ipv4:app:8888"}
-	if !equalSorted(got, want) {
-		t.Fatalf("startup snapshot = %v, want %v (loopback filtered, non-loopback passes)", got, want)
-	}
-
-	// A loopback remove must not produce a close event.
-	evCh <- evRemove(lo.V4, lo.TCP, "127.0.0.1", 9999)
-	select {
-	case extra := <-c.Changes():
-		t.Fatalf("unexpected event on loopback remove: %v", extra)
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	// Removing the wildcard listen for 9999 drops its refcount to 0 → close.
-	evCh <- evRemove(lo.V4, lo.TCP, "0.0.0.0", 9999)
-	got = recvChanges(t, c.Changes(), time.Second)
-	if !equalSorted(got, []string{"close:ipv4:app:9999"}) {
-		t.Fatalf("after wildcard remove: got %v, want [close:ipv4:app:9999]", got)
-	}
-
-	// Removing the specific non-loopback listen → close for that port.
-	evCh <- evRemove(lo.V4, lo.TCP, "10.0.0.1", 8888)
-	got = recvChanges(t, c.Changes(), time.Second)
-	if !equalSorted(got, []string{"close:ipv4:app:8888"}) {
-		t.Fatalf("after non-loopback remove: got %v, want [close:ipv4:app:8888]", got)
-	}
-}
-
 // TestStartupSnapshotIsFirstSend verifies that Changes always delivers the
 // combined startup snapshot as its very first item, even when incremental
 // events race in immediately after a container's first sync.

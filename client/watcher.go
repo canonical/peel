@@ -189,14 +189,6 @@ func (cw *containerWatcher) watchOnce(syncCallback func([]string)) error {
 			continue
 		}
 
-		// Skip listens on loopback addresses (127.x.x.x, ::1): those are
-		// local to the container. Wildcard (0.0.0.0, ::) and specific
-		// non-loopback addresses both pass through.
-		// "sync" events carry no Listen, so they must always pass through.
-		if ev.Op != "sync" && !wantListen(ev.Listen) {
-			continue
-		}
-
 		k := portKey{stack: ev.Stack, port: ev.Port}
 
 		switch ev.Op {
@@ -275,15 +267,6 @@ func (cw *containerWatcher) watchOnce(syncCallback func([]string)) error {
 		}
 	}
 	return sc.Err()
-}
-
-// wantListen reports whether l should be tracked and reported by the client.
-// Listens on loopback addresses (127.x.x.x, ::1) are excluded because they
-// are local to the container. Wildcard (0.0.0.0, ::) and specific
-// non-loopback addresses are both included.
-func wantListen(l lo.Listen) bool {
-	ip := net.ParseIP(l.Addr)
-	return ip != nil && !ip.IsLoopback()
 }
 
 // makeChange formats a single port-change string.
