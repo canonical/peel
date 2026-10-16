@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/google/go-containerregistry v0.21.7
-	github.com/insomniacslk/dhcp v0.0.0-20260719225207-c76316d4aa82
+	github.com/insomniacslk/dhcp v0.0.0-20261014062924-c6bb46ad3f3a
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sys v0.46.0
 )
